@@ -1,0 +1,4 @@
+node_modules/
+
+# firebase environment file
+.runtimeconfig.json
