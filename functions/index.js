@@ -4,13 +4,6 @@ const app = express()
 const axios = require('axios')
 
 /**
- * Admin SDK & Firestore
- */
-const admin = require('firebase-admin')
-admin.initializeApp(functions.config().firebase)
-const firestore = admin.firestore()
-
-/**
  * for Codic API
  */
 const codic = axios.create({
@@ -25,7 +18,6 @@ const codic = axios.create({
  * for Slack API
  */
 const slack = axios.create({
-  // baseURL: functions.config().slack.hook_url,
   method: 'post'
 })
 
@@ -108,64 +100,32 @@ app.post('/kebab', (req, res) => {
  * @param {*} casing codic.engine.casing
  */
 function main(req, res, casing) {
+  // タイムアウト対策のため、まずレスポンス返しておく
   res.status(200).send()
 
-  _checkRegistered(req, res)
-    .then(response => {
-      if (response === null) {
-        // res.status(500).send()
-      } else {
-        return response.data().url
-      }
-    })
-    .then(url => {
-      _main(req, res, casing, url)
+  if (req.body.text === '') {
+    postSlack({ text: '何も変換出来ない:thinking_face:' }, res, req.body.response_url, req.body.command)
+    return
+  }
+  
+  // Codic問い合わせ
+  const reqBody = { text: req.body.text }
+  if (casing.param !== CASING.NO_CASING.param) {
+    reqBody.casing = casing.param
+  }
+  codic.post('/v1/engine/translate.json', reqBody)
+    .then(codicResponse => {
+      const codicResult = codicResponse.data[0]
+      // wordsを整形
+      const wordList = makeWordList(codicResult.words)
+      // Slackに投げるオブジェクトを整形
+      const msgBody = makeMsgBodyForPostSlack(codicResult.text, codicResult.translated_text, wordList, casing.text, req.body)
+      // 投稿
+      postSlack(msgBody, res, req.body.response_url)
     })
     .catch(err => {
       console.log(err)
-      // res.status(500).send(err)
     })
-
-  function _checkRegistered(req) {
-    return firestore.collection('teams')
-                    .doc(req.body.team_id)
-                    .get()
-                    .then(response => {
-                      if (!response.exists) {
-                        return null
-                      }
-                      return response
-                    })
-                    .catch(err => {
-                      return null
-                    })
-  }
-
-  function _main(req, res, casing, url) {
-    if (req.body.text === '') {
-      postSlack({ text: '何も変換出来ない:thinking_face:' }, res, url, req.body.command)
-      return
-    }
-    
-    // Codic問い合わせ
-    const reqBody = { text: req.body.text }
-    if (casing.param !== CASING.NO_CASING.param) {
-      reqBody.casing = casing.param
-    }
-    codic.post('/v1/engine/translate.json', reqBody)
-      .then(codicResponse => {
-        const codicResult = codicResponse.data[0]
-        // wordsを整形
-        const wordList = makeWordList(codicResult.words)
-        // Slackに投げるオブジェクトを整形
-        const msgBody = makeMsgBodyForPostSlack(codicResult.text, codicResult.translated_text, wordList, casing.text)
-        // 投稿
-        postSlack(msgBody, res, url)
-      })
-      .catch(err => {
-        // afterPost(500, err, res)
-      })
-  }
 }
 
 /***** Sub Methods *****/
@@ -177,26 +137,10 @@ function main(req, res, casing) {
  * @param {*} url
  */
 function postSlack(reqBody, expressRes, url) {
-  return slack.post(url, reqBody)
-    .then(() => {
-      // afterPost(200, '', expressRes)
-    })
+  slack.post(url, reqBody)
     .catch(err => {
-      // afterPost(500, err, expressRes)
+      console.log(err)
     })
-}
-
-/**
- * SlackへのPost後の処理
- * @param {*} status 
- * @param {*} toLog 
- * @param {*} expressRes 
- */
-function afterPost(status, toLog, expressRes) {
-  if (status !== 200) {
-    console.log(toLog)
-  }
-  // expressRes.status(status).send(toLog)
 }
 
 /**
@@ -237,7 +181,7 @@ function makeWordList(words) {
  * @param {*} wordList 
  * @param {*} casing
  */
-function makeMsgBodyForPostSlack(text, translated, wordList, casing) {
+function makeMsgBodyForPostSlack(text, translated, wordList, casing, reqBody) {
   // 最有力候補
   const mostPrime = {
     color: '#36a64f',
@@ -254,13 +198,18 @@ function makeMsgBodyForPostSlack(text, translated, wordList, casing) {
         value: word.candidates
       }
     })
+
+  const subs = {
+    fields: fields,
+    footer: `by ${reqBody.user_name}`
+  }
   
   return {
     response_type: 'in_channel',
-    text: `「${text}」の命名候補\n\ncasing：${casing}`,
+    text: `「${text}」の命名候補\n\ncasing：${casing}\n\ncommand： \`${reqBody.command} ${reqBody.text}\``,
     attachments: [
       mostPrime,
-      { fields: fields }
+      subs
     ]
   }
 }
