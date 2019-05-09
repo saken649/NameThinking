@@ -122,9 +122,11 @@ function main(req, res, casing) {
       const msgBody = makeMsgBodyForPostSlack(codicResult.text, codicResult.translated_text, wordList, casing.text, req.body)
       // 投稿
       postSlack(msgBody, res, req.body.response_url)
+      res.end()
     })
     .catch(err => {
       console.log(err)
+      res.end()
     })
 }
 
