@@ -101,7 +101,7 @@ app.post('/kebab', (req, res) => {
  */
 function main(req, res, casing) {
   // タイムアウト対策のため、まずレスポンス返しておく
-  res.status(200).send()
+  res.status(202).send()
 
   if (req.body.text === '') {
     postSlack({ text: '何も変換出来ない:thinking_face:' }, res, req.body.response_url, req.body.command)
